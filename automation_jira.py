@@ -2,20 +2,17 @@
 jira_daily_audit_mailer.py
 --------------------------------
 Script para Jira Cloud que:
-1. Consulta issues resueltos el día anterior.
-2. Agrupa por analista (assignee).
+1. Consulta issues resueltos el día anterior (JQL relativo).
+2. Agrupa por analista (assignee), incluyendo "Sin asignar".
 3. Selecciona N aleatorios por analista.
-4. Envía un correo con los resultados.
+4. Envía un correo con los resultados (o guarda vista previa en DRY_RUN).
 
-Se puede ejecutar:
-- Localmente (con DRY_RUN=true para no enviar correos).
-- En GitHub Actions (con secrets configurados).
-
-Buenas prácticas incluidas:
-- Configuración via variables de entorno (no hardcodear credenciales).
-- Manejo de errores si faltan variables críticas.
-- Comentarios explicativos a lo largo del código.
-
+Buenas prácticas:
+- Carga .env
+- Validación de variables
+- Pide solo los campos necesarios
+- Timeout en requests
+- Soporta múltiples destinatarios
 """
 
 import os
@@ -65,7 +62,7 @@ def load_settings():
     for var in required_vars:
         val = os.getenv(var)
         if not val:
-            print(f" ----- [ERROR] Falta variable de entorno: {var}", file=sys.stderr)
+            print(f"[ERROR] Falta variable de entorno: {var}", file=sys.stderr)
             sys.exit(1)
         cfg[var] = val
 
@@ -94,6 +91,7 @@ def load_settings():
 # 2. CONSULTA DE ISSUES EN JIRA
 # ================================================================
 
+# ---- esta funcion que consulta en el portal la informacion requeridad 
 def build_jql_relative(project_keys: str) -> str:
     """
     Usa el día calendario 'ayer' según la zona del usuario en Jira,
@@ -119,7 +117,8 @@ def fetch_all_issues(base_url: str, auth: tuple, jql: str):
     max_results = 100
     session = requests.Session()
     headers = {"Accept": "application/json"}
-    fields = "key,summary,assignee,resolutiondate"
+    # Incluimos reporter como referencia futura; el script usa principalmente assignee
+    fields = "key,summary,assignee,reporter,resolutiondate"
 
     while True:
         url = f"{base_url}/rest/api/3/search"
@@ -148,7 +147,7 @@ def fetch_all_issues(base_url: str, auth: tuple, jql: str):
 # ================================================================
 # 3. PROCESAMIENTO DE ISSUES
 # ================================================================
-
+# resumen estadisticas agsinadas
 def summarize_assignee_stats(issues):
     with_assignee = sum(1 for i in issues if i.get("fields", {}).get("assignee"))
     without_assignee = len(issues) - with_assignee
@@ -158,17 +157,20 @@ def summarize_assignee_stats(issues):
 def group_by_assignee(issues):
     """
     Agrupa issues por analista (assignee).
-    Devuelve un diccionario con clave = (accountId, displayName) y valor = lista de issues.
+    Incluye un grupo especial para 'Sin asignar'.
+    Clave: (accountId, displayName) o ("UNASSIGNED", "(Sin asignar)")
     """
     groups = {}
     for issue in issues:
         fields = issue.get("fields", {})
         assignee = fields.get("assignee")
         if not assignee:
-            continue  # ignorar issues sin asignar
-        key = assignee["accountId"]
-        name = assignee.get("displayName", "Desconocido")
-        groups.setdefault((key, name), []).append(issue)
+            key = ("UNASSIGNED", "(Sin asignar)")
+            name = "(Sin asignar)"
+        else:
+            key = (assignee["accountId"], assignee.get("displayName", "Desconocido"))
+            name = assignee.get("displayName", "Desconocido")
+        groups.setdefault((key[0], name), []).append(issue)
     return groups
 
 
@@ -192,6 +194,7 @@ def build_email_html(base_url: str, target_date: date, selection, total_issues: 
     """
     Construye el cuerpo del correo en HTML.
     target_date es un objeto date (no datetime) que representa 'ayer' para el asunto/encabezado.
+    Muestra el nombre del responsable al lado de cada issue y el link al issue.
     """
     date_str = target_date.isoformat()
     html = [f"<h2>Auditoría de issues resueltos el {date_str}</h2>"]
@@ -202,16 +205,19 @@ def build_email_html(base_url: str, target_date: date, selection, total_issues: 
                     "Es posible que los issues estén sin asignar o que el filtro no aplique.</em></p>")
 
     # Ordenar por nombre del analista para consistencia visual
-    for (_, name) in sorted(selection.keys(), key=lambda k: k[1].lower()):
-        issues = selection[(None, name)] if (None, name) in selection else \
-                 [i for (aid, nm), lst in selection.items() if nm == name for i in lst]
-
+    for (account_id, name), issues in sorted(selection.items(), key=lambda kv: kv[0][1].lower()):
         html.append(f"<h3>{name} ({len(issues)})</h3><ul>")
         for issue in issues:
             key = issue["key"]
-            summary = issue["fields"].get("summary", "(sin resumen)")
+            fields = issue.get("fields", {})
+            summary = fields.get("summary", "(sin resumen)")
+            assignee = fields.get("assignee")
+            assignee_name = (assignee or {}).get("displayName") or "(Sin asignar)"
             url = f"{base_url}/browse/{key}"
-            html.append(f"<li><a href='{url}'>{key}</a>: {summary}</li>")
+            html.append(
+                f"<li><a href='{url}'>{key}</a>: {summary} — "
+                f"<strong>{assignee_name}</strong></li>"
+            )
         html.append("</ul>")
 
     return "\n".join(html)
@@ -238,6 +244,7 @@ def send_email(cfg, subject: str, html_body: str):
     msg.attach(part)
 
     if cfg["DRY_RUN"]:
+
         print("[DRY_RUN] No se envió correo. Contenido MIME (recortado).")
         # Guarda una copia del HTML para revisión rápida
         fname = f"auditoria_preview_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
@@ -255,6 +262,42 @@ def send_email(cfg, subject: str, html_body: str):
         server.sendmail(cfg["SENDER_EMAIL"], recipients, msg.as_string())
 
 
+
+# ================================================================
+# Funcion para imprimir en consola el resultado
+# ================================================================
+def print_console_summary(base_url: str, selection, total_issues: int):
+    """
+    Imprime en consola un resumen legible:
+    - Total de issues
+    - Bloques por responsable (incluye '(Sin asignar)')
+    - Por issue: KEY — resumen — responsable — URL
+    """
+    def _short(text: str, maxlen: int = 100) -> str:
+        if text is None:
+            return "(sin resumen)"
+        text = str(text)
+        return text if len(text) <= maxlen else text[: maxlen - 3] + "..."
+
+    print("\n=== Resumen de auditoría (consola) ===")
+    print(f"Total de issues resueltos: {total_issues}")
+
+    if not selection:
+        print("No se encontraron issues con analista asignado para el rango.")
+        return
+
+    # Ordenar por nombre del analista
+    for (account_id, name), issues in sorted(selection.items(), key=lambda kv: kv[0][1].lower()):
+        print(f"\n{name} ({len(issues)}):")
+        for issue in issues:
+            key = issue.get("key", "(sin clave)")
+            fields = issue.get("fields", {}) or {}
+            summary = _short(fields.get("summary"))
+            assignee = fields.get("assignee")
+            assignee_name = (assignee or {}).get("displayName") or "(Sin asignar)"
+            url = f"{base_url}/browse/{key}"
+            print(f"  - {key} — {summary} — Resp.: {assignee_name} — {url}")
+
 # ================================================================
 # 5. PROGRAMA PRINCIPAL
 # ================================================================
@@ -267,7 +310,7 @@ def get_yesterday_bogota() -> date:
     now_bog = datetime.now(ZoneInfo("America/Bogota"))
     return (now_bog - timedelta(days=1)).date()
 
-
+# ------------------ FUNCION PRINCIPAL ----------------------
 def main():
     # Cargamos configuración
     cfg = load_settings()
@@ -285,14 +328,19 @@ def main():
     print(f"[INFO] Issues recuperados: {len(issues)}")
     summarize_assignee_stats(issues)
 
-    # Agrupamos por analista y seleccionamos N aleatorios
+    # Agrupamos por analista (incluye "Sin asignar") y seleccionamos N aleatorios
     groups = group_by_assignee(issues)
     selection = pick_random_per_analyst(groups, cfg["PER_ANALYST"])
-
+    
+    if cfg["DRY_RUN"]: 
+        # 🔽 Imprimir resumen en consola para pruebas
+        print_console_summary(cfg["JIRA_BASE_URL"], selection, len(issues))        
+        
+    
     # Fecha "ayer" (Bogotá) para asunto y HTML
     yesterday_bog = get_yesterday_bogota()
 
-    # Construimos HTML y asunto
+    # Construimos HTML y asunto (con nombres y links por issue)
     html = build_email_html(cfg["JIRA_BASE_URL"], yesterday_bog, selection, len(issues))
     subject = f"[Auditoría] Issues resueltos el {yesterday_bog.isoformat()}"
 
