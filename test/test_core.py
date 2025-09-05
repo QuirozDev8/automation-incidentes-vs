@@ -14,6 +14,7 @@ Pruebas unitarias básicas para el script jira_daily_audit_mailer.py
 
 Se usan objetos simulados (mock data) en lugar de llamar al API real de Jira.
 Esto permite validar la lógica de negocio sin depender de internet.
+
 """
 
 import pytest

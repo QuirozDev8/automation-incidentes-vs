@@ -5,3 +5,4 @@ __pycache__/
 .vscode/
 .DS_Store
 auditoria_preview_*.html
+*.html
