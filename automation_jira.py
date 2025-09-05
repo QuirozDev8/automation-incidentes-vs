@@ -25,7 +25,9 @@ from zoneinfo import ZoneInfo  # Python 3.9+
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv, find_dotenv
-
+# para probar en que liena se imprime una funcion con 
+#  => traceback.print_stack(limit=2)  # <-- te mostrará la línea que lo llamó
+import traceback
 
 # ================================================================
 # 1. CONFIGURACIÓN
@@ -151,8 +153,8 @@ def fetch_all_issues(base_url: str, auth: tuple, jql: str):
 def summarize_assignee_stats(issues):
     with_assignee = sum(1 for i in issues if i.get("fields", {}).get("assignee"))
     without_assignee = len(issues) - with_assignee
-    print(f"[INFO] Con assignee: {with_assignee} | Sin assignee: {without_assignee}")
-
+    print(f"  [INFO] Con assignee: {with_assignee} | Sin assignee: {without_assignee}")
+   
 
 def group_by_assignee(issues):
     """
@@ -189,7 +191,6 @@ def pick_random_per_analyst(groups, per_analyst: int):
 # ================================================================
 # 4. CONSTRUCCIÓN DE CORREO
 # ================================================================
-
 def build_email_html(base_url: str, target_date: date, selection, total_issues: int) -> str:
     """
     Construye el cuerpo del correo en HTML.
@@ -197,12 +198,12 @@ def build_email_html(base_url: str, target_date: date, selection, total_issues: 
     Muestra el nombre del responsable al lado de cada issue y el link al issue.
     """
     date_str = target_date.isoformat()
-    html = [f"<h2>Auditoría de issues resueltos el {date_str}</h2>"]
-    html.append(f"<p>Total de issues resueltos ayer: {total_issues}</p>")
+    html = [f"<h2 >Auditoría de incidentes  resueltos el {date_str}</h2>"]
+    html.append(f"<p>Total de incidentes  resueltos ayer: {total_issues}</p>")
 
     if not selection:
-        html.append("<p><em>No se encontraron issues con analista asignado. "
-                    "Es posible que los issues estén sin asignar o que el filtro no aplique.</em></p>")
+        html.append("<p><em>No se encontraron incidentes  con analista asignado. "
+                    "Es posible que los incidentes  estén sin asignar o que el filtro no aplique.</em></p>")
 
     # Ordenar por nombre del analista para consistencia visual
     for (account_id, name), issues in sorted(selection.items(), key=lambda kv: kv[0][1].lower()):
