@@ -191,37 +191,114 @@ def pick_random_per_analyst(groups, per_analyst: int):
 # ================================================================
 # 4. CONSTRUCCIÓN DE CORREO
 # ================================================================
+from html import escape
+from datetime import date
+
 def build_email_html(base_url: str, target_date: date, selection, total_issues: int) -> str:
     """
-    Construye el cuerpo del correo en HTML.
-    target_date es un objeto date (no datetime) que representa 'ayer' para el asunto/encabezado.
-    Muestra el nombre del responsable al lado de cada issue y el link al issue.
+    funcion para renderizar el html en el correo
     """
     date_str = target_date.isoformat()
-    html = [f"<h2 >Auditoría de incidentes  resueltos el {date_str}</h2>"]
-    html.append(f"<p>Total de incidentes  resueltos ayer: {total_issues}</p>")
+    preheader = f"Total de incidentes resueltos: {total_issues} — {date_str}"
 
+    # Paleta y fuentes 
+    bg = "#faf6fa"
+    card_bg = "#ffffff"
+    text = "#0f172a"
+    text_muted = "#334155"
+    border = "#eaeef2"
+    border_soft = "#e5e7eb"
+    link = "#0b57d0"
+
+    # view html que se mostrara en el correo
+    html_content = f"""\
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="x-apple-disable-message-reformatting" />
+            <meta name="color-scheme" content="light only" />
+            <title>Auditoría de incidentes</title>
+        </head>
+        <body style="margin:0; padding:0; background-color:{bg};">
+            
+            
+            <!-- preheader (oculto) -->
+            <div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0; mso-hide:all;">
+            {escape(preheader)}
+            </div>
+
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:{bg};">
+            <tr>
+                <td align="center" style="padding:24px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px; max-width:600px; background:{card_bg}; border:1px solid {border}; border-radius:8px;">
+                    <tr>
+                    <td style="padding:24px; font-family:-apple-system,Segoe UI,Roboto,Arial,Helvetica,sans-serif; color:{text}; font-size:14px; line-height:1.6;">
+                        <h2 style="margin:0 0 8px 0; font-size:20px; line-height:1.3; color:{text};">
+                        Auditoría de incidentes resueltos el {escape(date_str)}
+                        </h2>
+                        <p style="margin:0 0 16px 0; color:{text_muted};">
+                        Total de incidentes resueltos: <strong style="color:{text};">{total_issues}</strong>
+                        </p>
+     """
+
+    # Mensaje si no hay selección
     if not selection:
-        html.append("<p><em>No se encontraron incidentes  con analista asignado. "
-                    "Es posible que los incidentes  estén sin asignar o que el filtro no aplique.</em></p>")
+         html_content += f"""\
+            <p style="margin:0; color:{text_muted};">
+            <em>No se encontraron incidentes con analista asignado. Es posible que los incidentes estén sin asignar o que el filtro no aplique.</em>
+            </p>
+        """
 
-    # Ordenar por nombre del analista para consistencia visual
-    for (account_id, name), issues in sorted(selection.items(), key=lambda kv: kv[0][1].lower()):
-        html.append(f"<h3>{name} ({len(issues)})</h3><ul>")
-        for issue in issues:
-            key = issue["key"]
-            fields = issue.get("fields", {})
-            summary = fields.get("summary", "(sin resumen)")
+    # Bloques por responsable
+    # Ordenar por displayName de analista
+    for (account_id, name), items in sorted(selection.items(), key=lambda kv: kv[0][1].lower()):
+        safe_name = escape(name or "(Sin asignar)")
+        count = len(items)
+        html_content += f"""\
+                <div style="margin:16px 0; padding:12px; border:1px solid {border_soft}; border-radius:8px;">
+                  <h3 style="margin:0 0 8px 0; font-size:16px; color:{text};">
+                    {safe_name} <span style="color:{text_muted};">({count})</span>
+                  </h3>
+                  <ol style="margin:0; padding-left:20px;">
+          """
+        for issue in items:
+            key = escape(issue.get("key", "(sin clave)"))
+            fields = issue.get("fields", {}) or {}
+            summary = escape(fields.get("summary", "(sin resumen)"))
             assignee = fields.get("assignee")
-            assignee_name = (assignee or {}).get("displayName") or "(Sin asignar)"
+            assignee_name = escape((assignee or {}).get("displayName") or "(Sin asignar)")
             url = f"{base_url}/browse/{key}"
-            html.append(
-                f"<li><a href='{url}'>{key}</a>: {summary} — "
-                f"<strong>{assignee_name}</strong></li>"
-            )
-        html.append("</ul>")
 
-    return "\n".join(html)
+            html_content += f"""\
+                    <li style="margin:0 0 6px 0;">
+                      <a href="{url}" style="color:{link}; text-decoration:none;">{key}</a>
+                      &nbsp;—&nbsp;{summary}
+                      &nbsp;—&nbsp;<strong style="color:{text};">{assignee_name}</strong>
+                    </li>
+             """
+        html_content += """\
+                  </ol>
+                </div>
+         """
+
+    # Cierre de tarjetas y wrapper
+    html_content += f"""\
+                <p style="margin:16px 0 0 0; color:{text_muted}; font-size:12px;">
+                  Reporte generado automáticamente. No responder a este correo.
+                </p>
+              </td>
+            </tr>
+          </table>
+          <div style="height:24px; line-height:24px;">&nbsp;</div>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+"""
+    
+    return html_content # html listo para pintar en el correo
 
 
 def send_email(cfg, subject: str, html_body: str):
@@ -261,7 +338,6 @@ def send_email(cfg, subject: str, html_body: str):
         if cfg["SMTP_PASSWORD"]:
             server.login(cfg["SMTP_USERNAME"], cfg["SMTP_PASSWORD"])
         server.sendmail(cfg["SENDER_EMAIL"], recipients, msg.as_string())
-
 
 
 # ================================================================
