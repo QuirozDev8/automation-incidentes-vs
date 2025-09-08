@@ -153,7 +153,7 @@ def fetch_all_issues(base_url: str, auth: tuple, jql: str):
 def summarize_assignee_stats(issues):
     with_assignee = sum(1 for i in issues if i.get("fields", {}).get("assignee"))
     without_assignee = len(issues) - with_assignee
-    print(f"  [INFO] Con assignee: {with_assignee} | Sin assignee: {without_assignee}")
+    print(f"[INFO] Con assignee: {with_assignee} | Sin assignee: {without_assignee}")
    
 
 def group_by_assignee(issues):
@@ -300,7 +300,7 @@ def build_email_html(base_url: str, target_date: date, selection, total_issues: 
     
     return html_content # html listo para pintar en el correo
 
-
+# envio de correo
 def send_email(cfg, subject: str, html_body: str):
     """
     Envía correo usando servidor SMTP.
@@ -387,6 +387,8 @@ def get_yesterday_bogota() -> date:
     now_bog = datetime.now(ZoneInfo("America/Bogota"))
     return (now_bog - timedelta(days=1)).date()
 
+
+
 # ------------------ FUNCION PRINCIPAL ----------------------
 def main():
     # Cargamos configuración
@@ -394,7 +396,8 @@ def main():
 
     # JQL para 'ayer' relativo (en Jira)
     jql = build_jql_relative(cfg["JIRA_PROJECT_KEYS"])
-    print(f"[INFO] Ejecutando JQL: {jql}")
+   # ver en consola la query que se esta ejecutando
+    print(f"\n[INFO] Ejecutando JQL: {jql}")
 
     # Consultamos Jira
     issues = fetch_all_issues(
