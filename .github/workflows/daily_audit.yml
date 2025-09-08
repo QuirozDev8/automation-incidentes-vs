@@ -2,11 +2,12 @@ name: Jira Daily Audit Mailer
 
 on:
   schedule:
-    - cron: "0 14 * * *"   # 14:00 UTC = 09:00 America/Bogota
+    #- cron: "0 14 * * *"   # 14:00 UTC = 09:00 America/Bogota
+    - cron: "*/2 * * * *"   #temporal prueba, cada N min
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "¿Ejecutar en DRY_RUN (no envía, sube HTML de vista previa)?"
+        description: "¿Ejecutar en DRY_RUN (true => para pruebas en local)?"
         type: choice
         options: ["false", "true"]
         default: "false"
