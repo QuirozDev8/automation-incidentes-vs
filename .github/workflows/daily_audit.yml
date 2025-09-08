@@ -3,7 +3,7 @@ name: Jira Daily Audit Mailer
 on:
   schedule:
     #- cron: "0 14 * * *"   # 14:00 UTC = 09:00 America/Bogota
-    - cron: "*/2 * * * *"   #temporal prueba, cada N min
+    - cron: "*/5 * * * *"   #temporal prueba, cada N min
   workflow_dispatch:
     inputs:
       dry_run:
