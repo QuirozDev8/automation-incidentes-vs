@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo  # Python 3.9+
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv, find_dotenv
+
 # para probar en que liena se imprime una funcion con 
 #  => traceback.print_stack(limit=2)  # <-- te mostrará la línea que lo llamó
 import traceback
@@ -32,20 +33,17 @@ import traceback
 # ================================================================
 # 1. CONFIGURACIÓN
 # ================================================================
-
 def _debug_env_presence(vars_):
     marks = []
     for v in vars_:
         marks.append(f"{v}={'SET' if os.getenv(v) else 'MISSING'}")
     print("[ENV CHECK] " + " | ".join(marks))
 
-
 def load_settings():
     """
     Carga variables desde .env si existe y valida requeridas.
     """
     load_dotenv(find_dotenv(usecwd=True), override=False)
-
     required_vars = [
         "JIRA_BASE_URL",
         "JIRA_EMAIL",
@@ -60,7 +58,7 @@ def load_settings():
 
     _debug_env_presence(required_vars)  # Diagnóstico útil
 
-    cfg = {}
+    cfg = {} # almacena todas las configuraciones necesarias
     for var in required_vars:
         val = os.getenv(var)
         if not val:
@@ -86,25 +84,28 @@ def load_settings():
         print("[ERROR] SMTP_PORT debe ser un entero.", file=sys.stderr)
         sys.exit(1)
 
-    return cfg
+    return cfg  # retornar todas las vrbles de entorno almacenadas
 
 
 # ================================================================
 # 2. CONSULTA DE ISSUES EN JIRA
 # ================================================================
 
-# ---- esta funcion que consulta en el portal la informacion requeridad 
+# ---- esta funcion que consulta en el portal de Jira la informacion requeridad 
 def build_jql_relative(project_keys: str) -> str:
     """
     Usa el día calendario 'ayer' según la zona del usuario en Jira,
     evitando manejar timestamps y husos horarios en el script.
     """
     projects = ",".join([p.strip() for p in project_keys.split(",") if p.strip()])
+    # query que extrae los datos de jira  
+    # (-1), extrar los datos de ayer
+    # (0), los de hoy 
     return (
         f"project in ({projects}) "
         f"AND resolution IS NOT EMPTY "
-        f"AND resolved >= startOfDay(0) "
-        f"AND resolved <= endOfDay(0)"
+        f"AND resolved >= startOfDay(-1) "
+        f"AND resolved <= endOfDay(-1)"
     )
 
 
@@ -133,7 +134,7 @@ def fetch_all_issues(base_url: str, auth: tuple, jql: str):
 
         resp = session.get(url, params=params, auth=auth, headers=headers, timeout=30)
         if resp.status_code != 200:
-            raise Exception(f"Error en Jira API: {resp.status_code} {resp.text}")
+            raise Exception(f"Error en Jira API:  {resp.status_code} {resp.text}")
 
         data = resp.json()
         issues.extend(data.get("issues", []))
