@@ -1,0 +1,135 @@
+name: Jira Daily Audit Mailer
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # 13:00 UTC = 08:30 America/Bogota
+    #- cron: "*/5 * * * *"   #temporal prueba, cada N min. demora por lo general 23m
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "¿Ejecutar en DRY_RUN (true => para pruebas en local)?"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+# Evita que se solapen ejecuciones si se dispara de nuevo antes de terminar
+concurrency:
+  group: jira-audit
+  cancel-in-progress: true
+
+jobs:
+  run-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    # Variables no sensibles y flags por defecto
+    env:
+      USE_GRAPH: "false"                      # usamos SMTP
+      SMTP_SERVER: smtp.gmail.com
+      SMTP_PORT: "587"
+      # Si el trigger es manual usa el input, si no (cron) usa "false"
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Sanity check (env presence, no secrets values)
+        run: |
+          python - << 'PY'
+          import os
+          req = [
+            "JIRA_BASE_URL","JIRA_EMAIL","JIRA_API_TOKEN","JIRA_PROJECT_KEYS",
+            "PER_ANALYST","RECIPIENT_EMAIL","SENDER_EMAIL","SMTP_USERNAME","SMTP_PASSWORD"
+          ]
+          print("[ENV CHECK - Actions]")
+          for k in req:
+            print(f"  {k}: {'SET' if os.getenv(k) else 'MISSING'}")
+          print(f"  SMTP_SERVER: {os.getenv('SMTP_SERVER')}")
+          print(f"  SMTP_PORT:   {os.getenv('SMTP_PORT')}")
+          print(f"  DRY_RUN:     {os.getenv('DRY_RUN')}")
+          PY
+        env:
+          # Jira
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEYS: ${{ secrets.JIRA_PROJECT_KEYS }}
+          PER_ANALYST: ${{ secrets.PER_ANALYST }}
+          # Mail
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+
+      - name: Run audit (SMTP - Gmail)
+        env:
+          # Jira
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEYS: ${{ secrets.JIRA_PROJECT_KEYS }}
+          PER_ANALYST: ${{ secrets.PER_ANALYST }}
+          # Mail
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SMTP_SERVER: ${{ env.SMTP_SERVER }}
+          SMTP_PORT: ${{ env.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_NAME: ${{ secrets.FROM_NAME }}
+          REPLY_TO: ${{ secrets.REPLY_TO }}
+          # Flags
+          DRY_RUN: ${{ env.DRY_RUN }}
+          USE_GRAPH: ${{ env.USE_GRAPH }}
+        run: |
+          python automation_jira.py
+
+      # Si es DRY_RUN, sube el HTML de vista previa para que puedas descargarlo
+      - name: Upload HTML preview
+        if: always() && env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-preview
+          path: auditoria_preview_*.html
+          if-no-files-found: ignore
+
+      # Notificación por email SÓLO cuando falla el job
+      - name: Notify failure by email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ env.SMTP_SERVER }}
+          server_port: ${{ env.SMTP_PORT }}
+          # Gmail con App Password (16 chars)
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          from:     ${{ secrets.SENDER_EMAIL }}
+          to:       ${{ secrets.ALERT_EMAILS }}
+          subject:  "[FAIL] ${{ github.repository }} / ${{ github.workflow }} #${{ github.run_number }}"
+          tls: true
+          secure: false
+          content_type: text/plain
+          body: |
+            La automatización falló.
+
+            Repo:     ${{ github.repository }}
+            Workflow: ${{ github.workflow }}  (run #${{ github.run_number }})
+            Job:      run-audit
+            Branch:   ${{ github.ref_name }}
+            Commit:   ${{ github.sha }}
+            Actor:    ${{ github.actor }}
+
+            Logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
